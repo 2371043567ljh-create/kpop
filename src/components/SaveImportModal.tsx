@@ -75,7 +75,7 @@ export const SaveImportModal: React.FC<SaveImportModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm px-4 pt-4 pb-20 sm:p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm px-4 pt-4 pb-24 lg:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="save-modal-title"

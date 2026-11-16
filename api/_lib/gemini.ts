@@ -1,4 +1,3 @@
-import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { AGENCY_CONFIGS, TRACK_CONFIGS } from '../../src/game/constants.ts';
 import { calculateEffectiveDeltas, clamp } from '../../src/game/rules.ts';
 import type { PlayerProfile, PlayerStats, StatDeltas } from '../../src/game/types.ts';
@@ -9,6 +8,10 @@ import {
   type ServerlessRequest,
   type ServerlessResponse,
 } from './http.ts';
+
+const DEFAULT_AI_BASE_URL = 'https://api.siliconflow.cn/v1';
+const DEFAULT_AI_MODEL = 'deepseek-ai/DeepSeek-V4.1-Flash';
+const AI_REQUEST_TIMEOUT_MS = 9000;
 
 interface EvaluateActionPayload {
   profile?: PlayerProfile;
@@ -29,19 +32,153 @@ interface CoreHandlerResult {
   data: unknown;
 }
 
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    return null;
+interface ChatCompletionResponse {
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }>;
+    };
+  }>;
+}
+
+export interface AiRuntimeConfig {
+  apiKey: string | null;
+  baseUrl: string;
+  model: string;
+}
+
+export function getAiConfig(): AiRuntimeConfig {
+  const rawKey = (process.env.AI_API_KEY || process.env.GEMINI_API_KEY || '').trim();
+  const isPlaceholder =
+    !rawKey || rawKey === 'MY_GEMINI_API_KEY' || rawKey === 'MY_AI_API_KEY';
+
+  const baseUrl = (process.env.AI_BASE_URL || DEFAULT_AI_BASE_URL)
+    .trim()
+    .replace(/\/+$/, '');
+  const model = (process.env.AI_MODEL || DEFAULT_AI_MODEL).trim();
+
+  return {
+    apiKey: isPlaceholder ? null : rawKey,
+    baseUrl: baseUrl || DEFAULT_AI_BASE_URL,
+    model: model || DEFAULT_AI_MODEL,
+  };
+}
+
+export function parseModelJson<T>(rawText: string): T {
+  let cleaned = rawText
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .trim();
+
+  // Strip ```json ... ``` or ``` ... ``` markdown code fences
+  const fencedMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch && fencedMatch[1]) {
+    cleaned = fencedMatch[1].trim();
+  } else {
+    cleaned = cleaned
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
   }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
+
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch {
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      const candidate = cleaned.slice(firstBrace, lastBrace + 1);
+      try {
+        return JSON.parse(candidate) as T;
+      } catch {
+        const noTrailingCommas = candidate.replace(/,\s*([}\]])/g, '$1');
+        return JSON.parse(noTrailingCommas) as T;
+      }
+    }
+    throw new Error('UNPARSEABLE_AI_JSON_RESPONSE');
+  }
+}
+
+function extractAssistantText(payload: ChatCompletionResponse): string {
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+      .join('');
+  }
+  return '';
+}
+
+async function callOpenAICompatibleChat(options: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  systemInstruction: string;
+  userPrompt: string;
+  maxTokens?: number;
+}): Promise<string> {
+  const endpoint = `${options.baseUrl}/chat/completions`;
+  const messages = [
+    { role: 'system', content: options.systemInstruction },
+    { role: 'user', content: options.userPrompt },
+  ];
+
+  const sendRequest = async (bodyPayload: Record<string, unknown>) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${options.apiKey}`,
+        },
+        body: JSON.stringify(bodyPayload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const primaryBody: Record<string, unknown> = {
+    model: options.model,
+    messages,
+    temperature: 0.7,
+    max_tokens: options.maxTokens ?? 900,
+    enable_thinking: false,
+    response_format: { type: 'json_object' },
+  };
+
+  let response = await sendRequest(primaryBody);
+
+  // Compatibility fallback if a third-party OpenAI-compatible endpoint rejects enable_thinking or response_format
+  if (!response.ok && (response.status === 400 || response.status === 422)) {
+    const errText = await response.text().catch(() => '');
+    const fallbackBody: Record<string, unknown> = {
+      model: options.model,
+      messages,
+      temperature: 0.7,
+      max_tokens: options.maxTokens ?? 900,
+    };
+    if (!/enable_thinking/i.test(errText)) {
+      fallbackBody.enable_thinking = false;
+    }
+    response = await sendRequest(fallbackBody);
+  }
+
+  if (!response.ok) {
+    const errorDetail = await response.text().catch(() => '');
+    throw new Error(`AI upstream HTTP ${response.status}: ${errorDetail.slice(0, 240)}`);
+  }
+
+  const data = (await response.json()) as ChatCompletionResponse;
+  const text = extractAssistantText(data).trim();
+  if (!text) {
+    throw new Error('AI upstream returned empty content');
+  }
+  return text;
 }
 
 function clampStatDelta(val: unknown, min: number, max: number): number {
@@ -50,9 +187,10 @@ function clampStatDelta(val: unknown, min: number, max: number): number {
 }
 
 export function evaluateHealthCore(): CoreHandlerResult {
+  const { apiKey } = getAiConfig();
   return {
     status: 200,
-    data: { ok: true, aiConfigured: Boolean(getGeminiClient()) },
+    data: { ok: true, aiConfigured: Boolean(apiKey) },
   };
 }
 
@@ -73,13 +211,13 @@ export async function evaluateActionCore(
     };
   }
 
-  const ai = getGeminiClient();
-  if (!ai) {
+  const { apiKey, baseUrl, model } = getAiConfig();
+  if (!apiKey) {
     return {
       status: 503,
       data: {
-        error: 'GEMINI_API_KEY_UNCONFIGURED',
-        message: '未检测到可用的 Gemini API 密钥，已为您切换本地剧本推演兜底。',
+        error: 'AI_API_KEY_UNCONFIGURED',
+        message: '未检测到可用的 AI API 密钥，已为您切换本地剧本推演兜底。',
       },
     };
   }
@@ -107,56 +245,42 @@ ${
 当前困境：${dilemmaPrompt}
 玩家自由行动/台词：「${userInput.trim().slice(0, 300)}」
 
-请返回结构化 JSON 结果。`;
+请严格按以下 JSON 结构返回结果（所有字段必须存在，statChanges 中每项均为整数）：
+{
+  "narrative": "160~260字第二人称中文剧情反馈",
+  "evaluatorNote": "一句现场考官/室长/同伴或媒体的犀利评语",
+  "outcomeTier": "必须是 brilliant、steady、risky、flawed 之一",
+  "unlockedTag": "4到9个中文字的行为标签，如：无伴奏镇场王牌",
+  "statChanges": {
+    "vocal": 0,
+    "dance": 0,
+    "rap": 0,
+    "stage": 0,
+    "stamina": -10,
+    "publicFavor": 4,
+    "controversy": 0
+  }
+}
+
+重要：请只返回纯 JSON 对象，不要输出任何 Markdown 解释文字、思考过程或前后缀，也不要使用 \`\`\`json 代码块包裹。`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: prompt,
-      config: {
-        systemInstruction,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            narrative: { type: Type.STRING, description: '160-260字第二人称中文剧情反馈' },
-            evaluatorNote: { type: Type.STRING, description: '一句现场考官/室长/同伴或媒体的犀利评语' },
-            outcomeTier: {
-              type: Type.STRING,
-              description: '必须是 brilliant, steady, risky, flawed 之一',
-            },
-            unlockedTag: {
-              type: Type.STRING,
-              description: '4到9个中文字的行为标签，如：无伴奏镇场王牌',
-            },
-            statChanges: {
-              type: Type.OBJECT,
-              properties: {
-                vocal: { type: Type.INTEGER },
-                dance: { type: Type.INTEGER },
-                rap: { type: Type.INTEGER },
-                stage: { type: Type.INTEGER },
-                stamina: { type: Type.INTEGER },
-                publicFavor: { type: Type.INTEGER },
-                controversy: { type: Type.INTEGER },
-              },
-              required: ['vocal', 'dance', 'rap', 'stage', 'stamina', 'publicFavor', 'controversy'],
-            },
-          },
-          required: ['narrative', 'evaluatorNote', 'outcomeTier', 'unlockedTag', 'statChanges'],
-        },
-      },
+    const rawText = await callOpenAICompatibleChat({
+      apiKey,
+      baseUrl,
+      model,
+      systemInstruction,
+      userPrompt: prompt,
+      maxTokens: 900,
     });
 
-    const rawText = (response.text ?? '').trim();
-    const parsed = JSON.parse(rawText) as {
+    const parsed = parseModelJson<{
       narrative?: string;
       evaluatorNote?: string;
       outcomeTier?: string;
       unlockedTag?: string;
       statChanges?: Record<string, unknown>;
-    };
+    }>(rawText);
 
     const rawChanges: StatDeltas = {
       vocal: clampStatDelta(parsed.statChanges?.vocal, -8, 10),
@@ -191,7 +315,7 @@ ${
       },
     };
   } catch (error) {
-    console.error('[Gemini evaluate-action error]', error);
+    console.error('[AI evaluate-action error]', error);
     return {
       status: 500,
       data: {
@@ -215,11 +339,11 @@ export async function evaluateTheqooPostCore(
     };
   }
 
-  const ai = getGeminiClient();
-  if (!ai) {
+  const { apiKey, baseUrl, model } = getAiConfig();
+  if (!apiKey) {
     return {
       status: 503,
-      data: { error: 'GEMINI_API_KEY_UNCONFIGURED' },
+      data: { error: 'AI_API_KEY_UNCONFIGURED' },
     };
   }
 
@@ -237,44 +361,36 @@ export async function evaluateTheqooPostCore(
 定位：${profile.roleLabel}${isAce ? '（全能 ACE 路线：自带极高话题度与严苛质疑风波）' : ''}
 上班路 15 秒真实动作：「${actionLabel}」`;
 
+  const userPrompt = `请为练习生 ${nameStr} 生成一篇凌晨坡州上班路被站姐和娱乐记者抓拍后冲上 theqoo HOT 的热帖，包含帖子标题、正文（120字以内）以及 5 条真实多样的韩国网友评论（既有吹气场/礼貌/会社血统的，也有挑刺质疑或提醒看初舞台实力的）。
+
+请严格按以下 JSON 结构返回结果：
+{
+  "postTitle": "帖子标题",
+  "postBody": "帖子正文（120字以内）",
+  "highlightTag": "4~12字高光标签",
+  "comments": [
+    { "author": "匿名网友 102", "content": "评论内容", "likes": 342 }
+  ]
+}
+
+重要：请只返回纯 JSON 对象，不要输出任何 Markdown 解释文字、思考过程或前后缀，不要使用 \`\`\`json 代码块包裹。`;
+
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: `请为练习生 ${nameStr} 生成一篇凌晨坡州上班路被站姐和娱乐记者抓拍后冲上 theqoo HOT 的热帖，包含帖子标题、正文（120字以内）以及 5 条真实多样的韩国网友评论（既有吹气场/礼貌/会社血统的，也有挑刺质疑或提醒看初舞台实力的）。`,
-      config: {
-        systemInstruction,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            postTitle: { type: Type.STRING },
-            postBody: { type: Type.STRING },
-            highlightTag: { type: Type.STRING },
-            comments: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  author: { type: Type.STRING },
-                  content: { type: Type.STRING },
-                  likes: { type: Type.INTEGER },
-                },
-                required: ['author', 'content', 'likes'],
-              },
-            },
-          },
-          required: ['postTitle', 'postBody', 'highlightTag', 'comments'],
-        },
-      },
+    const rawText = await callOpenAICompatibleChat({
+      apiKey,
+      baseUrl,
+      model,
+      systemInstruction,
+      userPrompt,
+      maxTokens: 900,
     });
 
-    const parsed = JSON.parse((response.text ?? '{}').trim()) as {
+    const parsed = parseModelJson<{
       postTitle?: string;
       postBody?: string;
       highlightTag?: string;
       comments?: Array<{ author?: string; content?: string; likes?: number }>;
-    };
+    }>(rawText);
 
     const comments = (parsed.comments ?? []).slice(0, 6).map((c, idx) => ({
       id: idx + 1,
@@ -302,7 +418,7 @@ export async function evaluateTheqooPostCore(
       },
     };
   } catch (error) {
-    console.error('[Gemini theqoo-post error]', error);
+    console.error('[AI theqoo-post error]', error);
     return {
       status: 500,
       data: { error: 'THEQOO_AI_FAILED' },

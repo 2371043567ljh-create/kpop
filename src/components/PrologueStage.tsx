@@ -316,7 +316,7 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
                       ))}
                     </div>
 
-                    {/* Free Action / Custom Input (Gemini Powered) */}
+                    {/* Free Action / Custom Input (AI Powered) */}
                     <form
                       onSubmit={handleCustomSubmit}
                       className="pt-4 border-t border-slate-800/80 space-y-3"
@@ -325,7 +325,7 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
                         htmlFor="custom-action-input"
                         className="block text-xs font-semibold text-slate-300"
                       >
-                        自由行动 / 自定义台词（由 Gemini 结合公司与定位实时生成反馈）
+                        自由行动 / 自定义台词（由 AI 结合公司与定位实时生成反馈）
                       </label>
                       <div className="flex flex-col sm:flex-row gap-2.5">
                         <textarea
