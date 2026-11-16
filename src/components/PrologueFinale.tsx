@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { AGENCY_CONFIGS, SCENE_BACKDROPS, TRACK_CONFIGS } from '../game/constants';
+import { evaluatePrologueVerdict } from '../game/rules';
 import type { SaveDataV1 } from '../game/types';
 import { TheqooPostCard } from './TheqooPostCard';
 
@@ -33,6 +34,15 @@ export const PrologueFinale: React.FC<PrologueFinaleProps> = ({
   const agency = AGENCY_CONFIGS[player.agency];
   const track = TRACK_CONFIGS[player.track];
   const isAce = player.roleMode === 'ace';
+  const verdict = evaluatePrologueVerdict(saveData);
+  const verdictStyle =
+    verdict.tier === 'disqualified'
+      ? 'bg-rose-950/35 border-rose-500/55 text-rose-200'
+      : verdict.tier === 'probation'
+        ? 'bg-amber-950/35 border-amber-500/50 text-amber-200'
+        : verdict.tier === 'elite'
+          ? 'bg-emerald-950/30 border-emerald-500/45 text-emerald-200'
+          : 'bg-[#181526] border-purple-500/40 text-purple-200';
 
   const handleQuickCopy = async () => {
     try {
@@ -101,6 +111,19 @@ export const PrologueFinale: React.FC<PrologueFinaleProps> = ({
           </div>
 
           <div className="p-6 sm:p-8 space-y-6">
+            {/* Prologue Verdict Status */}
+            <div className={`border rounded-xl p-5 space-y-2 ${verdictStyle}`}>
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                {verdict.tier === 'disqualified' || verdict.tier === 'probation' ? (
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                ) : (
+                  <Sparkles className="w-4 h-4 shrink-0" />
+                )}
+                <span>序章终审定级：{verdict.title}</span>
+              </div>
+              <p className="text-sm text-slate-200 leading-relaxed">{verdict.summary}</p>
+            </div>
+
             {/* Explicit Prologue End & Future Chapters Locked Notice */}
             <div className="bg-[#181526] border border-purple-500/40 rounded-xl p-5 space-y-2">
               <div className="flex items-center gap-2 text-sm font-semibold text-purple-200">

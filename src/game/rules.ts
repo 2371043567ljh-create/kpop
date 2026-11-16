@@ -138,6 +138,168 @@ export function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(val)));
 }
 
+const SEVERE_MISCONDUCT_PATTERNS = [
+  /我是你(爸爸|爹|爷|祖宗|老子)/,
+  /叫(爸爸|爹|爷爷)/,
+  /(操你|草泥马|cnm|nmsl|傻逼|智障|弱智|脑残|废物|垃圾公司|去死|滚蛋|滚出去)/i,
+  /(竖中指|吐口水|砸麦|摔麦|掀桌子|打考官|打理事|罢演|不干了|老子不录了)/,
+];
+
+export function detectSevereMisconductInput(userInput: string): boolean {
+  const normalized = userInput.replace(/\s+/g, '');
+  return SEVERE_MISCONDUCT_PATTERNS.some((re) => re.test(normalized));
+}
+
+export interface SanitizeAiOutcomeParams {
+  rawStatChanges?: Record<string, unknown>;
+  outcomeTier?: string;
+  severeViolation?: boolean;
+  unlockedTag?: string;
+  userInput?: string;
+}
+
+export interface SanitizedAiOutcome {
+  outcomeTier: 'brilliant' | 'steady' | 'risky' | 'flawed';
+  severeViolation: boolean;
+  rawChanges: StatDeltas;
+  unlockedTag: string;
+}
+
+function clampRawStat(val: unknown, min: number, max: number): number {
+  if (typeof val !== 'number' || Number.isNaN(val)) return 0;
+  return clamp(val, min, max);
+}
+
+export function sanitizeAiActionOutcome(params: SanitizeAiOutcomeParams): SanitizedAiOutcome {
+  const validTiers = new Set(['brilliant', 'steady', 'risky', 'flawed']);
+  const explicitMisconduct = params.userInput
+    ? detectSevereMisconductInput(params.userInput)
+    : false;
+  const severeViolation = Boolean(params.severeViolation) || explicitMisconduct;
+
+  let outcomeTier: 'brilliant' | 'steady' | 'risky' | 'flawed' = validTiers.has(
+    params.outcomeTier ?? ''
+  )
+    ? (params.outcomeTier as 'brilliant' | 'steady' | 'risky' | 'flawed')
+    : 'steady';
+
+  if (severeViolation) {
+    outcomeTier = 'flawed';
+  }
+
+  const sc = params.rawStatChanges;
+  const rawChanges: StatDeltas = {
+    vocal: clampRawStat(sc?.vocal, -35, 10),
+    dance: clampRawStat(sc?.dance, -35, 10),
+    rap: clampRawStat(sc?.rap, -35, 10),
+    stage: clampRawStat(sc?.stage, -35, 12),
+    stamina: clampRawStat(sc?.stamina, -35, 10),
+    publicFavor: clampRawStat(sc?.publicFavor, -35, 16),
+    controversy: clampRawStat(sc?.controversy, -6, 45),
+  };
+
+  if (outcomeTier === 'flawed') {
+    // Never reward abilities or public favor when an action is judged flawed
+    rawChanges.vocal = Math.min(0, rawChanges.vocal ?? 0);
+    rawChanges.dance = Math.min(0, rawChanges.dance ?? 0);
+    rawChanges.rap = Math.min(0, rawChanges.rap ?? 0);
+    rawChanges.stage = Math.min(0, rawChanges.stage ?? 0);
+    rawChanges.publicFavor = Math.min(0, rawChanges.publicFavor ?? 0);
+    rawChanges.stamina = Math.min(-8, rawChanges.stamina ?? 0);
+    rawChanges.controversy = Math.max(12, rawChanges.controversy ?? 0);
+  }
+
+  if (severeViolation) {
+    rawChanges.stage = Math.min(-15, rawChanges.stage ?? 0);
+    rawChanges.publicFavor = Math.min(-18, rawChanges.publicFavor ?? 0);
+    rawChanges.stamina = Math.min(-18, rawChanges.stamina ?? 0);
+    rawChanges.controversy = Math.max(28, rawChanges.controversy ?? 0);
+    const otherTotalPenalty =
+      (rawChanges.vocal ?? 0) + (rawChanges.dance ?? 0) + (rawChanges.rap ?? 0);
+    if (otherTotalPenalty === 0) {
+      rawChanges.vocal = -10;
+      rawChanges.dance = -10;
+    }
+  }
+
+  let unlockedTag = (params.unlockedTag ?? '').trim().slice(0, 16);
+  if (severeViolation) {
+    const hasNegativeMarker =
+      /(自杀|触怒|停评|黑名单|失格|封杀|顶撞|崩溃|恶评|淘汰|作死|危机)/.test(unlockedTag);
+    if (!unlockedTag || !hasNegativeMarker) {
+      unlockedTag = '职场自杀：触怒高层';
+    }
+  } else if (!unlockedTag) {
+    unlockedTag = outcomeTier === 'flawed' ? '失误承压者' : '自主破局者';
+  }
+
+  return {
+    outcomeTier,
+    severeViolation,
+    rawChanges,
+    unlockedTag,
+  };
+}
+
+export interface PrologueVerdict {
+  tier: 'elite' | 'qualified' | 'probation' | 'disqualified';
+  title: string;
+  summary: string;
+}
+
+export function evaluatePrologueVerdict(save: SaveDataV1): PrologueVerdict {
+  const { stats, behaviorTags, prologueProgress } = save;
+  const flawedCount = prologueProgress.history.filter(
+    (h) => h.outcomeTier === 'flawed'
+  ).length;
+  const brilliantCount = prologueProgress.history.filter(
+    (h) => h.outcomeTier === 'brilliant'
+  ).length;
+
+  const hasSevereTag = behaviorTags.some((tag) =>
+    /(职场自杀|触怒高层|停评|黑名单|封杀|失格)/.test(tag)
+  );
+
+  if (
+    hasSevereTag ||
+    stats.controversy >= 65 ||
+    stats.publicFavor <= 5 ||
+    (stats.stamina <= 5 && flawedCount >= 2)
+  ) {
+    return {
+      tier: 'disqualified',
+      title: '极差结局 · 黑卡冻结与业内封杀预警',
+      summary:
+        '你在序章期间严重触及四大社上下级礼仪红线或累积了毁灭性负面评价，公司内部已将你的档案列入【高危停评 / 随时撤换】名单。即便站到演播厅门前，后续晋级前景也已岌岌可危。',
+    };
+  }
+
+  if (stats.controversy >= 40 || flawedCount >= 2 || stats.publicFavor <= 15) {
+    return {
+      tier: 'probation',
+      title: '高危红牌 · 留用观察期',
+      summary:
+        '你虽勉强保住了序章入场名额，但负面争议与失误记录已引起高层和舆论警觉。踏入正赛后若不能立刻用压倒性舞台反转口碑，将面临严酷的淘汰危机。',
+    };
+  }
+
+  if (flawedCount === 0 && brilliantCount >= 2 && stats.controversy < 35) {
+    return {
+      tier: 'elite',
+      title: '王牌高光 · 重点护航序列',
+      summary:
+        '你在高压终审与舆论前夜交出了令人惊艳的答卷，四大社高层与先导口碑均已向你倾斜，正式以强竞争力候选人姿态推开金色大门。',
+    };
+  }
+
+  return {
+    tier: 'qualified',
+    title: '合格入场 · 序章履历核准',
+    summary:
+      '你稳妥完成了序章全部考核节点并保留了核心实力底盘，已做好在百人修罗场中争夺首轮顺位的准备。',
+  };
+}
+
 export function calculateEffectiveDeltas(
   rawDeltas: StatDeltas,
   agencyId: AgencyId,

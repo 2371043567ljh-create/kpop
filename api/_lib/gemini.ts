@@ -1,6 +1,11 @@
 import { AGENCY_CONFIGS, TRACK_CONFIGS } from '../../src/game/constants.ts';
-import { calculateEffectiveDeltas, clamp } from '../../src/game/rules.ts';
-import type { PlayerProfile, PlayerStats, StatDeltas } from '../../src/game/types.ts';
+import {
+  calculateEffectiveDeltas,
+  clamp,
+  detectSevereMisconductInput,
+  sanitizeAiActionOutcome,
+} from '../../src/game/rules.ts';
+import type { PlayerProfile, PlayerStats } from '../../src/game/types.ts';
 import {
   enforceMethod,
   readJsonBody,
@@ -181,11 +186,6 @@ async function callOpenAICompatibleChat(options: {
   return text;
 }
 
-function clampStatDelta(val: unknown, min: number, max: number): number {
-  if (typeof val !== 'number' || Number.isNaN(val)) return 0;
-  return clamp(val, min, max);
-}
-
 export function evaluateHealthCore(): CoreHandlerResult {
   const { apiKey } = getAiConfig();
   return {
@@ -225,39 +225,54 @@ export async function evaluateActionCore(
   const agency = AGENCY_CONFIGS[profile.agency];
   const track = TRACK_CONFIGS[profile.track];
   const isAce = profile.roleMode === 'ace';
+  const trimmedInput = userInput.trim().slice(0, 300);
+  const flaggedSevere = detectSevereMisconductInput(trimmedInput);
 
-  const systemInstruction = `你是 K-POP 偶像选秀文字养成游戏《STAR PLANET：序章·风暴前夜》的沉浸式导演与数值裁判。
-【核心规则】
-1. 绝对不要擅自描写或预设玩家的外貌长相、身高体重、体型或固定性格标签，完全围绕玩家此刻的实际行动和台词展开心理与现场反馈。
-2. 紧扣所属社氛围：${agency.name}（${agency.koreanName} - ${agency.tagline}），参赛赛道：${track.title}（${track.englishBadge}）。
-3. 紧扣定位：${profile.roleLabel}。
+  const systemInstruction = `你是 K-POP 偶像选秀文字养成游戏《STAR PLANET：序章·风暴前夜》的沉浸式导演与铁面裁判。
+【核心铁律：严禁无脑护短与强行爽文洗白】
+1. 必须严格遵循韩国四大社（${agency.name} - ${agency.koreanName}）极度严苛的上下级礼仪（前辈/理事/制作总管/考官不可冒犯）、职场阶级规则与残酷商业淘汰逻辑。在韩国演艺圈，实力再强一旦触犯礼仪红线、顶撞高层或当场摆烂，都会被立刻封杀、停评或一剪没。
+2. 绝对不要擅自描写或预设玩家的外貌长相、身高体重、体型或固定性格标签，完全围绕玩家此刻的实际行动和台词展开真实商业后果与现场反应。
+3. 紧扣所属社氛围：${agency.name}（${agency.tagline}），参赛赛道：${track.title}（${track.englishBadge}），定位：${profile.roleLabel}。
+4. 【分级裁决标准（严禁给挑衅/作死/摆烂内容任何正面奖励）】
+   - 「brilliant / steady」仅限：真正具备专业舞台逻辑、临场抗压过硬、礼仪分寸得当的高水准应对，才可给予对应能力或路人缘正面加分（+2~+10）。
+   - 「risky」适用于：剑走偏锋、略显傲气但未突破礼仪与职业底线的博弈（必须附带明显争议飙升 +6~+16 或扣减路人缘）。
+   - 「flawed」（普通失误/消极敷衍）：怯场、敷衍、答非所问、逃避考核——严禁给予任何 Vocal/Dance/Rap/Stage/路人缘 正向加分（必须全部 <= 0），扣减能力/路人缘 -5~-15，controversy 上升 +12~+22。
+   - 「flawed + severeViolation: true」（严重作死 / 职场自杀）：凡出现以下任一行为——① 侮辱、挑衅、占口头便宜、脏话、威胁或恶意顶撞考官/理事/前辈（例如“我是你爸爸”“滚”等）；② 严重破坏职场礼仪或录制秩序（摔麦、竖中指、骚扰他人）；③ 彻底消极摆烂、胡言乱语、把终审或上班路当儿戏——
+     必须判定 outcomeTier="flawed" 且 severeViolation=true！
+     必须如实描写考官/室长当场震怒、冷脸拍桌叫停测评、录制中止或将你列入内部撤换黑名单的冰冷后果，绝不允许强行圆场、夸“有魄力/反差感/真性情”！
+     Vocal/Dance/Rap/Stage/路人缘 严禁出现任何正数（必须 <= 0），其中核心表现/Stage 扣除 -15~-35，publicFavor 扣除 -18~-35，stamina 扣除 -18~-35，controversy 暴涨 +28~+45！
+     unlockedTag 必须使用严厉负面印记（如：“职场自杀：触怒高层”、“无礼顶撞遭停评”、“大社黑名单预备”等）。
 ${
   isAce
-    ? '4. 【⚠️ 全能 ACE 高危判定】当前玩家选择了高风险全能 ACE 路线！考官、室长与外界会用最高零短板标准审视玩家：如果玩家输入敷衍、荒诞、逃避核心考核或自大空洞，必须判定为 flawed 或 risky，大幅增加 controversy (+8~+16)、扣减 publicFavor (-4~-10)，并锐评“样样通样样松 / 伪全能”；只有专业且抗压极强的应对才给高赞与高加成。体力消耗通常在 -8 到 -22 之间。'
-    : '4. 当前玩家走双修路线，请结合其主次定位表现给出公允且富有 K-POP 行业真实感的反应。'
+    ? '5. 【⚠️ 全能 ACE 高危加压】玩家走高风险全能 ACE 路线，考官对敷衍与失态容忍度更低：若非真正专业且顶住高压的硬核应对，一律从重处罚并嘲讽“样样通样样松 / 伪全能不配占用名额”。'
+    : '5. 请结合双修定位给出符合四大社利益计算的写实商业裁决。'
 }
-5. 用第二人称“你”撰写 160~260 字细腻有临场感的中文剧情反馈（narrative），以及一句犀利的考官/对手/现场评语（evaluatorNote）。
-6. 严格遵守后续仅到序章为止的边界，不要剧透第一章及之后的正式公演剧情。`;
+6. 用第二人称“你”撰写 160~260 字细腻冷峻的中文剧情反馈（narrative），以及一句犀利的考官/室长/现场评语（evaluatorNote）。严禁剧透第一章及之后的正式公演剧情。`;
 
   const prompt = `当前幕次：第 ${actNumber ?? 1} 幕《${sceneTitle}》
 练习生：${profile.displayName}（本名：${profile.realName}）
 当前数值：Vocal ${stats.vocal} / Dance ${stats.dance} / Rap ${stats.rap} / Stage ${stats.stage} / 体力 ${stats.stamina}/${stats.maxStamina} / 路人缘 ${stats.publicFavor} / 争议度 ${stats.controversy}
 当前困境：${dilemmaPrompt}
-玩家自由行动/台词：「${userInput.trim().slice(0, 300)}」
+玩家自由行动/台词：「${trimmedInput}」${
+    flaggedSevere
+      ? '\n【系统裁判强制预警】检测到玩家输入存在严重冒犯/侮辱/破坏职业底线内容，本回合必须判定为 outcomeTier="flawed"、severeViolation=true，现场考官/高层必须当场震怒中止测评或重罚，绝对禁止圆场或给出任何正面技能/路人缘加分！'
+      : ''
+  }
 
 请严格按以下 JSON 结构返回结果（所有字段必须存在，statChanges 中每项均为整数）：
 {
   "narrative": "160~260字第二人称中文剧情反馈",
   "evaluatorNote": "一句现场考官/室长/同伴或媒体的犀利评语",
   "outcomeTier": "必须是 brilliant、steady、risky、flawed 之一",
-  "unlockedTag": "4到9个中文字的行为标签，如：无伴奏镇场王牌",
+  "severeViolation": false,
+  "unlockedTag": "4到12个中文字的行为标签，如：无伴奏镇场王牌 或 职场自杀：触怒高层",
   "statChanges": {
     "vocal": 0,
     "dance": 0,
     "rap": 0,
     "stage": 0,
     "stamina": -10,
-    "publicFavor": 4,
+    "publicFavor": 0,
     "controversy": 0
   }
 }
@@ -278,39 +293,41 @@ ${
       narrative?: string;
       evaluatorNote?: string;
       outcomeTier?: string;
+      severeViolation?: boolean;
       unlockedTag?: string;
       statChanges?: Record<string, unknown>;
     }>(rawText);
 
-    const rawChanges: StatDeltas = {
-      vocal: clampStatDelta(parsed.statChanges?.vocal, -8, 10),
-      dance: clampStatDelta(parsed.statChanges?.dance, -8, 10),
-      rap: clampStatDelta(parsed.statChanges?.rap, -8, 10),
-      stage: clampStatDelta(parsed.statChanges?.stage, -8, 12),
-      stamina: clampStatDelta(parsed.statChanges?.stamina, -24, 10),
-      publicFavor: clampStatDelta(parsed.statChanges?.publicFavor, -12, 16),
-      controversy: clampStatDelta(parsed.statChanges?.controversy, -6, 18),
-    };
+    const sanitized = sanitizeAiActionOutcome({
+      rawStatChanges: parsed.statChanges,
+      outcomeTier: parsed.outcomeTier,
+      severeViolation: parsed.severeViolation,
+      unlockedTag: parsed.unlockedTag,
+      userInput: trimmedInput,
+    });
 
     const appliedDeltas = calculateEffectiveDeltas(
-      rawChanges,
+      sanitized.rawChanges,
       profile.agency,
       isAce,
       actNumber === 1 || actNumber === 2
     );
 
-    const validTiers = new Set(['brilliant', 'steady', 'risky', 'flawed']);
-    const outcomeTier = validTiers.has(parsed.outcomeTier ?? '')
-      ? (parsed.outcomeTier as 'brilliant' | 'steady' | 'risky' | 'flawed')
-      : 'steady';
-
     return {
       status: 200,
       data: {
-        narrative: parsed.narrative || '你在窒息的灯光下完成了自己的选择，现场一片短促的沉默后迅速恢复了秩序。',
-        evaluatorNote: parsed.evaluatorNote || '“记住你今天的反应，镜头不会遗忘任何一秒。”',
-        outcomeTier,
-        unlockedTag: parsed.unlockedTag?.slice(0, 14) || '自主破局者',
+        narrative:
+          parsed.narrative ||
+          (sanitized.severeViolation
+            ? '你的言行彻底越过了四大社最后的职业底线。测评室温度骤降，主考官冷着脸直接按停了计时器与伴奏音轨，在你的档案页重重划下一道红线。'
+            : '你在窒息的灯光下完成了自己的选择，现场一片短促的沉默后迅速恢复了秩序。'),
+        evaluatorNote:
+          parsed.evaluatorNote ||
+          (sanitized.severeViolation
+            ? '“连最基本的上下级敬语和职业底线都没有的人，四大社养不起，出去立刻收拾东西滚蛋。”'
+            : '“记住你今天的反应，镜头不会遗忘任何一秒。”'),
+        outcomeTier: sanitized.outcomeTier,
+        unlockedTag: sanitized.unlockedTag,
         appliedDeltas,
       },
     };
@@ -356,6 +373,7 @@ export async function evaluateTheqooPostCore(
 
   const systemInstruction = `你是韩国论坛 theqoo 热门贴模拟生成器（全部用自然流畅的中文汉化韩网论坛口吻输出）。
 【严禁违背】绝对不要在帖子或评论里捏造玩家具体的五官长相、身高、体重或发色细节，重点聚焦在【15秒上班路姿态动作、所属社滤镜、气质气场、定位实力期待与争议】！
+【严禁强行洗白】如果“上班路 15 秒真实动作”包含粗鲁无礼、竖中指、辱骂记者/粉丝、摆烂发疯或严重失态内容，绝不允许吹捧成“真性情/酷/反差圈粉/神图”，帖子正文与评论必须呈现真实韩网舆论大炎上、痛批四大社人品教育失败与要求退赛的严厉反噬！
 玩家所属社：${agency.name}（${agency.tagline}）
 参赛赛道：${track.englishBadge}（${track.title}）
 定位：${profile.roleLabel}${isAce ? '（全能 ACE 路线：自带极高话题度与严苛质疑风波）' : ''}

@@ -337,3 +337,95 @@ test('evaluateActionCore and evaluateTheqooPostCore call SiliconFlow chat/comple
     else process.env.AI_MODEL = prevModel;
   }
 });
+
+test('evaluateActionCore suppresses LLM whitewashing on severe provocation inputs', async () => {
+  const prevFetch = globalThis.fetch;
+  const prevAiKey = process.env.AI_API_KEY;
+  let capturedPromptText = '';
+
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? '{}')) as {
+      messages?: Array<{ role: string; content: string }>;
+    };
+    capturedPromptText = (body.messages ?? []).map((m) => m.content).join('\n');
+
+    // Simulate an overly permissive LLM trying to reward Stage +3 and publicFavor +4
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                narrative: '你对考官挑衅喊出我是你爸爸。',
+                evaluatorNote: '“有点胆量。”',
+                outcomeTier: 'steady',
+                severeViolation: false,
+                unlockedTag: '个性十足',
+                statChanges: {
+                  vocal: 0,
+                  dance: 0,
+                  rap: 0,
+                  stage: 3,
+                  stamina: -5,
+                  publicFavor: 4,
+                  controversy: 2,
+                },
+              }),
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  }) as typeof fetch;
+
+  try {
+    process.env.AI_API_KEY = 'sf-unit-test-key';
+    const res = await evaluateActionCore({
+      profile: {
+        realName: '林星野',
+        stageName: '',
+        displayName: '林星野',
+        track: 'boy',
+        agency: 'sm',
+        roleMode: 'dual',
+        primaryRole: 'vocal',
+        secondaryRole: 'stage',
+        roleLabel: '主唱 + 舞台副中心',
+      },
+      stats: {
+        vocal: 70,
+        dance: 45,
+        rap: 40,
+        stage: 62,
+        stamina: 100,
+        maxStamina: 100,
+        publicFavor: 20,
+        controversy: 10,
+      },
+      actNumber: 1,
+      sceneTitle: '凌晨三点的最终月评',
+      dilemmaPrompt: '伴奏延迟',
+      userInput: '我是你爸爸',
+    });
+
+    assert.equal(res.status, 200);
+    assert.match(capturedPromptText, /严禁无脑护短/);
+    assert.match(capturedPromptText, /系统裁判强制预警/);
+
+    const payload = res.data as {
+      outcomeTier: string;
+      unlockedTag: string;
+      appliedDeltas: Record<string, number>;
+    };
+    assert.equal(payload.outcomeTier, 'flawed');
+    assert.match(payload.unlockedTag, /职场自杀/);
+    assert.ok(payload.appliedDeltas.stage <= -15);
+    assert.ok(payload.appliedDeltas.publicFavor <= -18);
+    assert.ok(payload.appliedDeltas.controversy >= 28);
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prevAiKey === undefined) delete process.env.AI_API_KEY;
+    else process.env.AI_API_KEY = prevAiKey;
+  }
+});

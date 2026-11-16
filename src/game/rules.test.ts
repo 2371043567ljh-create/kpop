@@ -7,7 +7,10 @@ import {
   calculateEffectiveDeltas,
   computeInitialStats,
   createSaveData,
+  detectSevereMisconductInput,
+  evaluatePrologueVerdict,
   parseSaveData,
+  sanitizeAiActionOutcome,
   validateCharacterSetup,
 } from './rules';
 import {
@@ -154,4 +157,92 @@ test('Full 5-act prologue playthrough awards keepsake in Act 3, Theqoo post in A
   assert.equal(parsed?.futureChapters.unlocked, false);
   assert.equal(parsed?.futureChapters.plannedTotalChapters, 5);
   assert.equal(parsed?.prologueProgress.completed, true);
+
+  const eliteVerdict = evaluatePrologueVerdict(save);
+  assert.equal(eliteVerdict.tier, 'elite');
+});
+
+test('sanitizeAiActionOutcome blocks positive rewards on flawed/provocation inputs and allows -35 penalties', () => {
+  assert.equal(detectSevereMisconductInput('对考官说“我是你爸爸”'), true);
+  assert.equal(detectSevereMisconductInput('摘掉耳返清唱完成高音'), false);
+
+  // Even if LLM attempts to whitewash a severe insult with steady + Stage +3 + publicFavor +4
+  const whitewashAttempt = sanitizeAiActionOutcome({
+    userInput: '我是你爸爸',
+    outcomeTier: 'steady',
+    severeViolation: false,
+    unlockedTag: '霸气反差圈粉',
+    rawStatChanges: {
+      vocal: 2,
+      dance: 0,
+      rap: 0,
+      stage: 3,
+      stamina: -5,
+      publicFavor: 4,
+      controversy: 5,
+    },
+  });
+
+  assert.equal(whitewashAttempt.outcomeTier, 'flawed');
+  assert.equal(whitewashAttempt.severeViolation, true);
+  assert.ok((whitewashAttempt.rawChanges.vocal ?? 0) <= 0);
+  assert.ok((whitewashAttempt.rawChanges.stage ?? 0) <= -15);
+  assert.ok((whitewashAttempt.rawChanges.publicFavor ?? 0) <= -18);
+  assert.ok((whitewashAttempt.rawChanges.stamina ?? 0) <= -18);
+  assert.ok((whitewashAttempt.rawChanges.controversy ?? 0) >= 28);
+  assert.match(whitewashAttempt.unlockedTag, /职场自杀|触怒/);
+
+  // Widened penalty cap allows up to -35 core/favor/stamina and +45 controversy
+  const heavyPenalty = sanitizeAiActionOutcome({
+    outcomeTier: 'flawed',
+    severeViolation: true,
+    unlockedTag: '触怒高层遭停评',
+    rawStatChanges: {
+      vocal: -30,
+      dance: -25,
+      rap: -20,
+      stage: -35,
+      stamina: -32,
+      publicFavor: -34,
+      controversy: 42,
+    },
+  });
+  assert.equal(heavyPenalty.rawChanges.vocal, -30);
+  assert.equal(heavyPenalty.rawChanges.stage, -35);
+  assert.equal(heavyPenalty.rawChanges.publicFavor, -34);
+  assert.equal(heavyPenalty.rawChanges.controversy, 42);
+});
+
+test('evaluatePrologueVerdict triggers disqualified extreme bad ending on workplace suicide tags or collapsed stats', () => {
+  const profile = buildPlayerProfile({
+    realName: '林星野',
+    stageName: '',
+    track: 'boy',
+    agency: 'sm',
+    roleMode: 'dual',
+    primaryRole: 'vocal',
+    secondaryRole: 'stage',
+  });
+  const baseStats = computeInitialStats('sm', 'dual', 'vocal', 'stage');
+  const wreckedStats = applyStatDeltas(baseStats, {
+    stage: -30,
+    publicFavor: -18,
+    stamina: -30,
+    controversy: 40,
+  });
+
+  const badSave = createSaveData({
+    player: profile,
+    stats: wreckedStats,
+    keepsake: null,
+    behaviorTags: ['职场自杀：触怒高层'],
+    theqooPost: null,
+    currentAct: 5,
+    completed: true,
+    history: [],
+  });
+
+  const verdict = evaluatePrologueVerdict(badSave);
+  assert.equal(verdict.tier, 'disqualified');
+  assert.match(verdict.title, /极差结局/);
 });
