@@ -84,7 +84,7 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#09090F] text-slate-100 pb-28 lg:pb-12">
+    <div className="min-h-screen bg-[#09090F] text-slate-100 pb-44 lg:pb-12">
       {/* Compact Header */}
       <header className="sticky top-0 z-30 bg-[#09090F]/95 border-b border-slate-800/80 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-8 h-14 flex items-center justify-between gap-4">
@@ -503,8 +503,8 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({
           </div>
         </aside>
 
-        {/* Mobile Sticky Submit Bar (compact, <= 15% viewport height) */}
-        <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-[#09090F]/95 border-t border-slate-800 backdrop-blur-md px-4 py-3">
+        {/* Mobile Floating Docked Submit Bar (elevated >= 68px to clear mobile bottom-right Netlify badge) */}
+        <div className="lg:hidden fixed bottom-[calc(68px+env(safe-area-inset-bottom))] left-3 right-3 z-30 bg-[#10111B]/95 border border-slate-700/90 rounded-xl shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md px-4 py-3">
           <div className="flex items-center justify-between gap-3 max-w-xl mx-auto">
             <div className="min-w-0">
               <div className="text-xs font-semibold text-white truncate">

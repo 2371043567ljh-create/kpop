@@ -75,13 +75,13 @@ export const SaveImportModal: React.FC<SaveImportModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm px-4 pt-4 pb-20 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="save-modal-title"
     >
-      <div className="w-full max-w-xl bg-[#12131C] border border-slate-700/80 rounded-xl shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+      <div className="w-full max-w-xl max-h-[calc(100dvh-6.5rem)] sm:max-h-[90vh] flex flex-col bg-[#12131C] border border-slate-700/80 rounded-xl shadow-2xl overflow-hidden">
+        <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-slate-800">
           <h2 id="save-modal-title" className="text-lg font-semibold text-white">
             {mode === 'export' ? '导出序章练习生存档 JSON' : '导入序章存档 JSON'}
           </h2>
@@ -95,7 +95,7 @@ export const SaveImportModal: React.FC<SaveImportModalProps> = ({
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-5 sm:p-6 space-y-4 overflow-y-auto">
           {mode === 'export' ? (
             <>
               <p className="text-sm text-slate-300 leading-relaxed">

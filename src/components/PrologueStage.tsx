@@ -437,7 +437,7 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
                   <button
                     type="button"
                     onClick={onNextAct}
-                    className="inline-flex items-center justify-center gap-2 px-6 py-3.5 min-h-[48px] rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm sm:text-base font-semibold transition-colors cursor-pointer"
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 min-h-[48px] rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm sm:text-base font-semibold transition-colors cursor-pointer"
                   >
                     <span>
                       {currentAct < 5 ? `进入第 ${currentAct + 1} 幕` : '推开金色大门 · 封存序章档案'}

@@ -57,7 +57,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
       </div>
 
       {/* Main Content Container */}
-      <main className="relative z-10 flex-1 flex items-center px-6 sm:px-10 lg:px-16 py-12 max-w-7xl w-full mx-auto">
+      <main className="relative z-10 flex-1 flex items-center px-6 sm:px-10 lg:px-16 pt-10 pb-24 sm:py-16 max-w-7xl w-full mx-auto">
         <div className="max-w-xl w-full space-y-8">
           {/* Bespoke inline SVG STAR PLANET Emblem */}
           <div className="space-y-4">

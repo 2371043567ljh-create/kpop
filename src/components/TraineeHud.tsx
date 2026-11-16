@@ -269,7 +269,7 @@ export const TraineeHud: React.FC<TraineeHudProps> = ({
           aria-modal="true"
           aria-label="练习生状态详情"
         >
-          <div className="w-full max-h-[85vh] overflow-y-auto bg-[#12131C] border-t border-slate-700 rounded-t-2xl p-5 space-y-4">
+          <div className="w-full max-h-[85vh] overflow-y-auto bg-[#12131C] border-t border-slate-700 rounded-t-2xl px-5 pt-5 pb-24 space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <span className="text-sm font-semibold text-white">练习生档案与实时数值</span>
               <button

@@ -58,7 +58,7 @@ export const PrologueFinale: React.FC<PrologueFinaleProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#09090F] text-slate-100 py-8 sm:py-12 px-4 sm:px-8">
+    <div className="min-h-screen bg-[#09090F] text-slate-100 pt-8 pb-24 sm:pt-12 sm:pb-24 lg:pb-14 px-4 sm:px-8">
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Golden Door Freeze Frame Banner */}
         <section className="relative rounded-2xl overflow-hidden border border-purple-500/40 bg-[#12131C] shadow-2xl">

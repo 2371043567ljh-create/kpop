@@ -192,7 +192,7 @@ export default function App() {
               onReturnTitle={() => setScreen('title')}
             />
 
-            <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-0 pb-12">
+            <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-0 pb-24 lg:pb-12">
               <PrologueStage
                 currentAct={currentAct}
                 profile={profile}
