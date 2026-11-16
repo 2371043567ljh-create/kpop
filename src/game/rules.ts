@@ -7,7 +7,7 @@ import {
   DUAL_SECONDARY_BONUS,
   ROLE_OPTIONS,
   SAVE_STORAGE_KEY,
-} from './constants';
+} from './constants.ts';
 import type {
   ActResolution,
   AgencyId,
@@ -21,7 +21,7 @@ import type {
   StatDeltas,
   TheqooPost,
   TrackId,
-} from './types';
+} from './types.ts';
 
 export interface CharacterSetupInput {
   realName: string;

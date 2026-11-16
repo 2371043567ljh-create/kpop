@@ -4,15 +4,18 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
-import { AGENCY_CONFIGS, TRACK_CONFIGS } from './src/game/constants';
-import { calculateEffectiveDeltas, clamp } from './src/game/rules';
-import type { PlayerProfile, PlayerStats, StatDeltas } from './src/game/types';
+import { AGENCY_CONFIGS, TRACK_CONFIGS } from './src/game/constants.ts';
+import { calculateEffectiveDeltas, clamp } from './src/game/rules.ts';
+import type { PlayerProfile, PlayerStats, StatDeltas } from './src/game/types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const IS_PRODUCTION =
+  process.env.NODE_ENV === 'production' ||
+  Boolean(process.env.K_SERVICE) ||
+  process.env.npm_lifecycle_event === 'start';
 
 function getGeminiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;

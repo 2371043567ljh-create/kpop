@@ -1,4 +1,4 @@
-import type { AgencyId, RoleId, StatDeltas, TrackId } from './types';
+import type { AgencyId, RoleId, StatDeltas, TrackId } from './types.ts';
 
 export const SAVE_STORAGE_KEY = 'star_planet_prologue_save_v1';
 
