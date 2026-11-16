@@ -1,0 +1,6 @@
+{
+  "name": "STAR PLANET：序章·风暴前夜",
+  "description": "K-POP 偶像选秀文字养成网页游戏：四大经纪公司入场券争夺、双修与全能 ACE 路线抉择、破晓上班路热帖路透与序章档案封存。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
