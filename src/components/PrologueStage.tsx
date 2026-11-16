@@ -11,8 +11,10 @@ import {
   getActScene,
   resolvePresetChoice,
 } from '../game/prologueScript';
+import { validateFreeActionInput } from '../game/rules';
 import type {
   ActResolution,
+  EvaluateActionResult,
   PlayerProfile,
   PlayerStats,
   StatDeltas,
@@ -27,6 +29,7 @@ interface PrologueStageProps {
   currentResolution: ActResolution | null;
   onResolveAct: (resolution: ActResolution) => void;
   onNextAct: () => void;
+  onViewElimination: () => void;
 }
 
 const STAT_DELTA_LABELS: Array<{ key: keyof StatDeltas; label: string }> = [
@@ -56,9 +59,11 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
   currentResolution,
   onResolveAct,
   onNextAct,
+  onViewElimination,
 }) => {
   const scene = getActScene(currentAct, profile);
   const [customInput, setCustomInput] = useState('');
+  const [inputError, setInputError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
@@ -66,6 +71,7 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
 
   useEffect(() => {
     setCustomInput('');
+    setInputError(null);
     setStatusNotice(null);
     window.scrollTo({ top: 0, behavior: 'auto' });
   }, [currentAct]);
@@ -117,9 +123,16 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
 
   const handleCustomSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = customInput.trim();
-    if (!trimmed || isLoading || currentResolution) return;
+    if (isLoading || currentResolution) return;
 
+    const validation = validateFreeActionInput(customInput);
+    if (!validation.valid) {
+      setInputError(validation.error || '请输入有效的行动或台词');
+      return;
+    }
+
+    const trimmed = customInput.trim();
+    setInputError(null);
     setIsLoading(true);
     setStatusNotice(null);
 
@@ -141,22 +154,23 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
       });
       clearTimeout(timer);
 
+      if (response.status === 400) {
+        const errBody = (await response.json().catch(() => ({}))) as { error?: string };
+        setInputError(errBody.error || '请输入有效的行动或台词');
+        setIsLoading(false);
+        return;
+      }
+
       if (!response.ok) {
         throw new Error('AI_ROUTE_FALLBACK');
       }
 
-      const data = (await response.json()) as {
-        narrative: string;
-        evaluatorNote: string;
-        outcomeTier: ActResolution['outcomeTier'];
-        unlockedTag: string;
-        appliedDeltas: ActResolution['appliedDeltas'];
-      };
+      const data = (await response.json()) as EvaluateActionResult;
 
-      // Preserve structural Act 3 keepsake & Act 4 Theqoo post guarantees
+      // Preserve structural Act 3 keepsake & Act 4 Theqoo post guarantees (skip Theqoo if eliminated immediately)
       const structuralRef = resolvePresetChoice(currentAct, scene.choices[0].id, profile, stats);
       let theqooPost: TheqooPost | undefined;
-      if (currentAct === 4) {
+      if (currentAct === 4 && !data.isEliminated) {
         theqooPost = await fetchAiTheqooPost(trimmed);
       }
 
@@ -170,8 +184,12 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
         appliedDeltas: data.appliedDeltas,
         unlockedTag: data.unlockedTag,
         outcomeTier: data.outcomeTier,
-        keepsakeAwarded: structuralRef.keepsakeAwarded,
+        keepsakeAwarded: data.isEliminated ? undefined : structuralRef.keepsakeAwarded,
         theqooPost,
+        isEliminated: Boolean(data.isEliminated),
+        endingTitle: data.endingTitle,
+        endingReason: data.endingReason,
+        endingSummary: data.endingSummary,
       });
     } catch {
       // Deterministic graceful fallback so player is never soft-locked
@@ -333,19 +351,30 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
                           rows={2}
                           maxLength={280}
                           value={customInput}
-                          onChange={(e) => setCustomInput(e.target.value)}
+                          onChange={(e) => {
+                            setCustomInput(e.target.value);
+                            if (inputError) setInputError(null);
+                          }}
                           placeholder={scene.customPlaceholder}
                           className="flex-1 rounded-lg bg-[#09090F] border border-slate-700 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-purple-500 resize-none"
                         />
                         <button
                           type="submit"
-                          disabled={!customInput.trim() || isLoading}
+                          disabled={isLoading}
                           className="sm:w-36 shrink-0 inline-flex items-center justify-center gap-2 px-4 py-3 min-h-[48px] rounded-lg bg-purple-600 hover:bg-purple-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed"
                         >
                           <Send className="w-4 h-4" />
                           <span>自由提交</span>
                         </button>
                       </div>
+                      {inputError && (
+                        <p
+                          role="alert"
+                          className="text-xs text-rose-300 bg-rose-950/35 border border-rose-500/40 rounded-lg px-3.5 py-2"
+                        >
+                          {inputError}
+                        </p>
+                      )}
                     </form>
                   </>
                 )}
@@ -353,17 +382,27 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
             ) : (
               /* Resolution Feedback Section */
               <div ref={resolutionRef} className="space-y-5">
-                <div className="bg-[#0B0C14] border border-slate-700/80 rounded-xl p-5 sm:p-6 space-y-4">
+                <div
+                  className={`bg-[#0B0C14] border rounded-xl p-5 sm:p-6 space-y-4 ${
+                    currentResolution.isEliminated
+                      ? 'border-rose-500/65'
+                      : 'border-slate-700/80'
+                  }`}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
                     <span className="text-xs text-slate-400 truncate max-w-md">
                       你的抉择：{currentResolution.actionLabel}
                     </span>
                     <span
                       className={`text-xs font-semibold ${
-                        TIER_META[currentResolution.outcomeTier].colorClass
+                        currentResolution.isEliminated
+                          ? 'text-rose-400'
+                          : TIER_META[currentResolution.outcomeTier].colorClass
                       }`}
                     >
-                      {TIER_META[currentResolution.outcomeTier].label}
+                      {currentResolution.isEliminated
+                        ? '终审终止 · 即刻淘汰'
+                        : TIER_META[currentResolution.outcomeTier].label}
                     </span>
                   </div>
 
@@ -432,19 +471,39 @@ export const PrologueStage: React.FC<PrologueStageProps> = ({
                   <TheqooPostCard post={currentResolution.theqooPost} />
                 )}
 
-                {/* Advance CTA */}
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="button"
-                    onClick={onNextAct}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 min-h-[48px] rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm sm:text-base font-semibold transition-colors cursor-pointer"
-                  >
-                    <span>
-                      {currentAct < 5 ? `进入第 ${currentAct + 1} 幕` : '推开金色大门 · 封存序章档案'}
-                    </span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                </div>
+                {/* Advance OR Immediate Elimination CTA */}
+                {currentResolution.isEliminated ? (
+                  <div className="pt-2 space-y-3">
+                    {currentResolution.endingReason && (
+                      <div className="bg-rose-950/35 border border-rose-500/45 rounded-lg px-4 py-3 text-xs sm:text-sm text-rose-200 leading-relaxed">
+                        淘汰裁决：{currentResolution.endingReason}
+                      </div>
+                    )}
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={onViewElimination}
+                        className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 min-h-[48px] rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-sm sm:text-base font-semibold transition-colors cursor-pointer"
+                      >
+                        <AlertTriangle className="w-4 h-4" />
+                        <span>终审终止 / 查看淘汰通告</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={onNextAct}
+                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 min-h-[48px] rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm sm:text-base font-semibold transition-colors cursor-pointer"
+                    >
+                      <span>
+                        {currentAct < 5 ? `进入第 ${currentAct + 1} 幕` : '推开金色大门 · 封存序章档案'}
+                      </span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

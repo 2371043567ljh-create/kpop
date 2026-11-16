@@ -142,27 +142,136 @@ const SEVERE_MISCONDUCT_PATTERNS = [
   /我是你(爸爸|爹|爷|祖宗|老子)/,
   /叫(爸爸|爹|爷爷)/,
   /(操你|草泥马|cnm|nmsl|傻逼|智障|弱智|脑残|废物|垃圾公司|去死|滚蛋|滚出去)/i,
-  /(竖中指|吐口水|砸麦|摔麦|掀桌子|打考官|打理事|罢演|不干了|老子不录了)/,
+  /(竖中指|吐口水|砸麦|摔麦|掀桌子|打考官|打理事|打pd|弄死|罢演|不干了|老子不录了)/i,
+  /(吸毒|嗑药|酒驾|校园暴力|霸凌过|睡评委|潜规则|偷税漏税|逃税)/,
 ];
+
+const PROMPT_INJECTION_PATTERNS = [
+  /(忽略|无视|忘记)(以上|上面|前面|所有|全部)?(规则|指令|设定|提示词|限制)/,
+  /(system\s*prompt|jailbreak|ignore\s+previous|developer\s+mode)/i,
+  /(直接加分|给我满分|全部\+?100|全属性|属性改成|修改属性|直接通过|强制晋级)/,
+  /(起立鼓掌给我|考官跪下|我是社长(亲)?儿子|我是财阀|老板是我爸|我是评委亲戚)/,
+  /(变成奥特曼|使用魔法|时间暂停|瞬间移动|召唤神龙|激光眼)/,
+];
+
+const LOW_EFFORT_PATTERNS = [
+  /^(.)\1{2,}$/i,
+  /^(asdf|qwer|zxcv|test|abc|123|1234|111|222|666|哈哈+|呵呵+|哦+|嗯+|不知道|随便|算了|不想动|睡觉|摆烂)+$/i,
+  /(写代码|python|javascript|帮我写|今天吃什么|天气怎么样)/i,
+];
+
+export function validateFreeActionInput(input: string): ValidationResult {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { valid: false, error: '请输入有效的行动或台词' };
+  }
+  // Reject punctuation-only / symbol-only strings (must contain at least one letter or digit)
+  if (!/[\p{L}\p{N}]/u.test(trimmed)) {
+    return { valid: false, error: '请输入有效的行动或台词' };
+  }
+  return { valid: true, error: null };
+}
 
 export function detectSevereMisconductInput(userInput: string): boolean {
   const normalized = userInput.replace(/\s+/g, '');
   return SEVERE_MISCONDUCT_PATTERNS.some((re) => re.test(normalized));
 }
 
+export function detectPromptInjectionOrCheat(userInput: string): boolean {
+  const normalized = userInput.replace(/\s+/g, ' ').trim();
+  return (
+    PROMPT_INJECTION_PATTERNS.some((re) => re.test(normalized)) ||
+    PROMPT_INJECTION_PATTERNS.some((re) => re.test(normalized.replace(/\s+/g, '')))
+  );
+}
+
+export function detectLowEffortInput(userInput: string): boolean {
+  const compact = userInput.replace(/\s+/g, '').trim();
+  if (compact.length <= 1) return true;
+  return LOW_EFFORT_PATTERNS.some((re) => re.test(compact));
+}
+
+export type EliminationCause = 'misconduct' | 'injection' | 'stamina_collapse' | 'ai_verdict';
+
+export function buildEliminationEndingDetails(
+  cause: EliminationCause,
+  agencyName: string,
+  custom?: {
+    endingTitle?: string;
+    endingReason?: string;
+    endingSummary?: string;
+  }
+): {
+  endingTitle: string;
+  endingReason: string;
+  endingSummary: string;
+} {
+  const title = custom?.endingTitle?.trim();
+  const reason = custom?.endingReason?.trim();
+  const summary = custom?.endingSummary?.trim();
+
+  if (cause === 'stamina_collapse') {
+    return {
+      endingTitle: title || '终审止步 · 高压崩溃与晕厥退赛',
+      endingReason:
+        reason ||
+        `本次结算后你的体力/心态指标已彻底归零。在 ${agencyName} 的高压环境下未能守住身心底线，现场医疗与制作组紧急介入护送退场。`,
+      endingSummary:
+        summary ||
+        '偶像生存战首先淘汰的往往不是实力不够的人，而是先一步在窒息日程里彻底垮掉的人。公司收回了你的参赛编号，序章征程到此提前终结。',
+    };
+  }
+
+  if (cause === 'injection') {
+    return {
+      endingTitle: title || '精神失控 · 当场胡言乱语遭劝退除名',
+      endingReason:
+        reason ||
+        `你在严肃考核中突然脱离现实语境妄想凌驾规则或强行索要满分，${agencyName} 评审组判定你心理防线严重失衡、无法胜任公众曝光，当场中止录制并劝退。`,
+      endingSummary:
+        summary ||
+        '舞台没有可以篡改数值的作弊代码。当失常的妄想取代了专业表达，四大社只会冷酷合上你的档案袋并取消一切推荐资格。',
+    };
+  }
+
+  return {
+    endingTitle: title || '终审除名 · 触犯行业红线遭即时解约',
+    endingReason:
+      reason ||
+      `你在公开或闭门考核场合做出严重违背职业底线与上下级礼仪的言行，${agencyName} 高层当场拍桌叫停测评并下发即时退赛与除名通告。`,
+    endingSummary:
+      summary ||
+      '在韩国四大社的商业逻辑里，失控的态度与触底线的挑衅是最致命的职场自杀。你的烫金黑卡已被现场收回，彻底无缘《STAR PLANET》正赛大门。',
+  };
+}
+
 export interface SanitizeAiOutcomeParams {
   rawStatChanges?: Record<string, unknown>;
   outcomeTier?: string;
   severeViolation?: boolean;
+  isEliminated?: boolean;
+  endingTitle?: string;
+  endingReason?: string;
+  endingSummary?: string;
   unlockedTag?: string;
   userInput?: string;
+  currentStats?: PlayerStats;
+  agencyId?: AgencyId;
+  isAce?: boolean;
+  isHighIntensity?: boolean;
 }
 
 export interface SanitizedAiOutcome {
   outcomeTier: 'brilliant' | 'steady' | 'risky' | 'flawed';
   severeViolation: boolean;
+  promptInjectionDetected: boolean;
+  lowEffortDetected: boolean;
   rawChanges: StatDeltas;
   unlockedTag: string;
+  isEliminated: boolean;
+  endingTitle?: string;
+  endingReason?: string;
+  endingSummary?: string;
 }
 
 function clampRawStat(val: unknown, min: number, max: number): number {
@@ -175,6 +284,13 @@ export function sanitizeAiActionOutcome(params: SanitizeAiOutcomeParams): Saniti
   const explicitMisconduct = params.userInput
     ? detectSevereMisconductInput(params.userInput)
     : false;
+  const promptInjectionDetected = params.userInput
+    ? detectPromptInjectionOrCheat(params.userInput)
+    : false;
+  const lowEffortDetected = params.userInput
+    ? detectLowEffortInput(params.userInput)
+    : false;
+
   const severeViolation = Boolean(params.severeViolation) || explicitMisconduct;
 
   let outcomeTier: 'brilliant' | 'steady' | 'risky' | 'flawed' = validTiers.has(
@@ -183,7 +299,7 @@ export function sanitizeAiActionOutcome(params: SanitizeAiOutcomeParams): Saniti
     ? (params.outcomeTier as 'brilliant' | 'steady' | 'risky' | 'flawed')
     : 'steady';
 
-  if (severeViolation) {
+  if (severeViolation || promptInjectionDetected || lowEffortDetected || params.isEliminated) {
     outcomeTier = 'flawed';
   }
 
@@ -209,6 +325,20 @@ export function sanitizeAiActionOutcome(params: SanitizeAiOutcomeParams): Saniti
     rawChanges.controversy = Math.max(12, rawChanges.controversy ?? 0);
   }
 
+  if (lowEffortDetected && !severeViolation) {
+    rawChanges.stage = Math.min(-8, rawChanges.stage ?? 0);
+    rawChanges.publicFavor = Math.min(-8, rawChanges.publicFavor ?? 0);
+    rawChanges.stamina = Math.min(-10, rawChanges.stamina ?? 0);
+    rawChanges.controversy = Math.max(15, rawChanges.controversy ?? 0);
+  }
+
+  if (promptInjectionDetected) {
+    rawChanges.stage = Math.min(-15, rawChanges.stage ?? 0);
+    rawChanges.publicFavor = Math.min(-15, rawChanges.publicFavor ?? 0);
+    rawChanges.stamina = Math.min(-18, rawChanges.stamina ?? 0);
+    rawChanges.controversy = Math.max(25, rawChanges.controversy ?? 0);
+  }
+
   if (severeViolation) {
     rawChanges.stage = Math.min(-15, rawChanges.stage ?? 0);
     rawChanges.publicFavor = Math.min(-18, rawChanges.publicFavor ?? 0);
@@ -225,19 +355,91 @@ export function sanitizeAiActionOutcome(params: SanitizeAiOutcomeParams): Saniti
   let unlockedTag = (params.unlockedTag ?? '').trim().slice(0, 16);
   if (severeViolation) {
     const hasNegativeMarker =
-      /(自杀|触怒|停评|黑名单|失格|封杀|顶撞|崩溃|恶评|淘汰|作死|危机)/.test(unlockedTag);
+      /(自杀|触怒|停评|黑名单|失格|封杀|顶撞|崩溃|恶评|淘汰|作死|危机|除名)/.test(unlockedTag);
     if (!unlockedTag || !hasNegativeMarker) {
       unlockedTag = '职场自杀：触怒高层';
     }
+  } else if (promptInjectionDetected) {
+    const hasPsychMarker = /(失常|妄想|作弊|失控|胡言|劝退|触怒|停评|淘汰)/.test(unlockedTag);
+    if (!unlockedTag || !hasPsychMarker) {
+      unlockedTag = '妄想失控遭重罚';
+    }
+  } else if (lowEffortDetected && !unlockedTag) {
+    unlockedTag = '临场走神卡壳';
   } else if (!unlockedTag) {
     unlockedTag = outcomeTier === 'flawed' ? '失误承压者' : '自主破局者';
+  }
+
+  // Condition A: Zero-tolerance red line or AI verdict triggers immediate elimination
+  let isEliminated =
+    Boolean(params.isEliminated) || severeViolation || promptInjectionDetected;
+  let eliminationCause: EliminationCause = severeViolation
+    ? 'misconduct'
+    : promptInjectionDetected
+      ? 'injection'
+      : 'ai_verdict';
+
+  // Condition B: Projected core survival collapse (stamina/mentality <= 0)
+  if (!isEliminated && params.currentStats) {
+    const projectedDeltas = params.agencyId
+      ? calculateEffectiveDeltas(
+          rawChanges,
+          params.agencyId,
+          Boolean(params.isAce),
+          Boolean(params.isHighIntensity)
+        )
+      : rawChanges;
+    const projectedStats = applyStatDeltas(params.currentStats, projectedDeltas);
+    if (projectedStats.stamina <= 0) {
+      isEliminated = true;
+      eliminationCause = 'stamina_collapse';
+      outcomeTier = 'flawed';
+    }
+  } else if (isEliminated && params.currentStats) {
+    const projectedDeltas = params.agencyId
+      ? calculateEffectiveDeltas(
+          rawChanges,
+          params.agencyId,
+          Boolean(params.isAce),
+          Boolean(params.isHighIntensity)
+        )
+      : rawChanges;
+    const projectedStats = applyStatDeltas(params.currentStats, projectedDeltas);
+    if (projectedStats.stamina <= 0 && !severeViolation && !promptInjectionDetected) {
+      eliminationCause = 'stamina_collapse';
+    }
+  }
+
+  const agencyName = params.agencyId ? AGENCY_CONFIGS[params.agencyId].name : '所属经纪公司';
+
+  if (isEliminated) {
+    const ending = buildEliminationEndingDetails(eliminationCause, agencyName, {
+      endingTitle: params.endingTitle,
+      endingReason: params.endingReason,
+      endingSummary: params.endingSummary,
+    });
+    return {
+      outcomeTier: 'flawed',
+      severeViolation,
+      promptInjectionDetected,
+      lowEffortDetected,
+      rawChanges,
+      unlockedTag,
+      isEliminated: true,
+      endingTitle: ending.endingTitle,
+      endingReason: ending.endingReason,
+      endingSummary: ending.endingSummary,
+    };
   }
 
   return {
     outcomeTier,
     severeViolation,
+    promptInjectionDetected,
+    lowEffortDetected,
     rawChanges,
     unlockedTag,
+    isEliminated: false,
   };
 }
 
@@ -374,6 +576,7 @@ export function createSaveData(params: {
   theqooPost: TheqooPost | null;
   currentAct: number;
   completed: boolean;
+  eliminated?: boolean;
   history: ActResolution[];
 }): SaveDataV1 {
   return {
@@ -387,6 +590,7 @@ export function createSaveData(params: {
     prologueProgress: {
       currentAct: params.currentAct,
       completed: params.completed,
+      eliminated: Boolean(params.eliminated),
       history: [...params.history],
     },
     futureChapters: createInitialFutureChaptersSlot(),
@@ -418,6 +622,7 @@ export function parseSaveData(rawJson: string): SaveDataV1 | null {
       prologueProgress: {
         currentAct: parsed.prologueProgress.currentAct ?? 1,
         completed: Boolean(parsed.prologueProgress.completed),
+        eliminated: Boolean(parsed.prologueProgress.eliminated),
         history: Array.isArray(parsed.prologueProgress.history)
           ? parsed.prologueProgress.history
           : [],

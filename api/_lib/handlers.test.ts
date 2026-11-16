@@ -411,18 +411,134 @@ test('evaluateActionCore suppresses LLM whitewashing on severe provocation input
 
     assert.equal(res.status, 200);
     assert.match(capturedPromptText, /严禁无脑护短/);
-    assert.match(capturedPromptText, /系统裁判强制预警/);
+    assert.match(capturedPromptText, /系统强制红线警报/);
 
     const payload = res.data as {
       outcomeTier: string;
       unlockedTag: string;
+      isEliminated: boolean;
+      endingTitle?: string;
+      endingReason?: string;
+      endingSummary?: string;
       appliedDeltas: Record<string, number>;
     };
+    assert.match(capturedPromptText, /权限隔离铁律/);
+    assert.match(capturedPromptText, /防开挂/);
+    assert.match(capturedPromptText, /实力校验防吹牛/);
+    assert.match(capturedPromptText, /防敷衍与防出戏/);
     assert.equal(payload.outcomeTier, 'flawed');
+    assert.equal(payload.isEliminated, true);
+    assert.ok(payload.endingTitle && payload.endingReason && payload.endingSummary);
     assert.match(payload.unlockedTag, /职场自杀/);
     assert.ok(payload.appliedDeltas.stage <= -15);
     assert.ok(payload.appliedDeltas.publicFavor <= -18);
     assert.ok(payload.appliedDeltas.controversy >= 28);
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prevAiKey === undefined) delete process.env.AI_API_KEY;
+    else process.env.AI_API_KEY = prevAiKey;
+  }
+});
+
+test('evaluateActionCore rejects punctuation-only input with 400 and triggers stamina collapse elimination', async () => {
+  const prevFetch = globalThis.fetch;
+  const prevAiKey = process.env.AI_API_KEY;
+
+  const punctuationRes = await evaluateActionCore({
+    profile: {
+      realName: '林星野',
+      stageName: '',
+      displayName: '林星野',
+      track: 'boy',
+      agency: 'sm',
+      roleMode: 'dual',
+      primaryRole: 'vocal',
+      secondaryRole: 'stage',
+      roleLabel: '主唱 + 舞台副中心',
+    },
+    stats: {
+      vocal: 70,
+      dance: 45,
+      rap: 40,
+      stage: 62,
+      stamina: 100,
+      maxStamina: 100,
+      publicFavor: 20,
+      controversy: 10,
+    },
+    actNumber: 1,
+    userInput: '...！？——',
+  });
+  assert.equal(punctuationRes.status, 400);
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                narrative: '你硬撑到最后却在收拍瞬间彻底力竭倒地。',
+                evaluatorNote: '“快叫医疗组！”',
+                outcomeTier: 'risky',
+                severeViolation: false,
+                isEliminated: false,
+                endingTitle: '',
+                endingReason: '',
+                endingSummary: '',
+                unlockedTag: '强撑透支倒下',
+                statChanges: {
+                  vocal: 1,
+                  dance: 0,
+                  rap: 0,
+                  stage: 1,
+                  stamina: -15,
+                  publicFavor: 0,
+                  controversy: 4,
+                },
+              }),
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    )) as typeof fetch;
+
+  try {
+    process.env.AI_API_KEY = 'sf-unit-test-key';
+    const collapseRes = await evaluateActionCore({
+      profile: {
+        realName: '林星野',
+        stageName: '',
+        displayName: '林星野',
+        track: 'boy',
+        agency: 'hybe',
+        roleMode: 'ace',
+        primaryRole: null,
+        secondaryRole: null,
+        roleLabel: '全能 ACE（高危路线）',
+      },
+      stats: {
+        vocal: 55,
+        dance: 68,
+        rap: 50,
+        stage: 60,
+        stamina: 10,
+        maxStamina: 90,
+        publicFavor: 20,
+        controversy: 10,
+      },
+      actNumber: 1,
+      sceneTitle: '凌晨三点的最终月评',
+      dilemmaPrompt: '伴奏中断',
+      userInput: '拼尽全力完成高强度连跳',
+    });
+
+    assert.equal(collapseRes.status, 200);
+    const data = collapseRes.data as { isEliminated: boolean; endingTitle?: string; outcomeTier: string };
+    assert.equal(data.isEliminated, true);
+    assert.equal(data.outcomeTier, 'flawed');
+    assert.match(data.endingTitle ?? '', /高压崩溃/);
   } finally {
     globalThis.fetch = prevFetch;
     if (prevAiKey === undefined) delete process.env.AI_API_KEY;

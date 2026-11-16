@@ -6,7 +6,7 @@ export type RoleId = 'vocal' | 'dance' | 'rap' | 'stage';
 
 export type RouteMode = 'dual' | 'ace';
 
-export type GameScreenState = 'title' | 'creating' | 'playing' | 'finished';
+export type GameScreenState = 'title' | 'creating' | 'playing' | 'finished' | 'eliminated';
 
 export type OutcomeTier = 'brilliant' | 'steady' | 'risky' | 'flawed';
 
@@ -79,6 +79,18 @@ export interface ActChoice {
   aceWarning?: string;
 }
 
+export interface EvaluateActionResult {
+  narrative: string;
+  evaluatorNote: string;
+  outcomeTier: OutcomeTier;
+  unlockedTag: string;
+  appliedDeltas: StatDeltas;
+  isEliminated: boolean;
+  endingTitle?: string;
+  endingReason?: string;
+  endingSummary?: string;
+}
+
 export interface ActResolution {
   actNumber: number;
   actTitle: string;
@@ -91,6 +103,10 @@ export interface ActResolution {
   outcomeTier: OutcomeTier;
   keepsakeAwarded?: Keepsake;
   theqooPost?: TheqooPost;
+  isEliminated?: boolean;
+  endingTitle?: string;
+  endingReason?: string;
+  endingSummary?: string;
 }
 
 export interface ActSceneData {
@@ -126,6 +142,7 @@ export interface SaveDataV1 {
   prologueProgress: {
     currentAct: number;
     completed: boolean;
+    eliminated?: boolean;
     history: ActResolution[];
   };
   futureChapters: FutureChaptersSlot;

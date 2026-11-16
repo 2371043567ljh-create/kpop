@@ -101,7 +101,12 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-xs text-purple-300 font-medium">
-                    本地存档记录 · {existingSave.prologueProgress.completed ? '序章已封存' : `进行至第 ${existingSave.prologueProgress.currentAct} 幕`}
+                    本地存档记录 ·{' '}
+                    {existingSave.prologueProgress.eliminated
+                      ? '已终止（淘汰结局）'
+                      : existingSave.prologueProgress.completed
+                        ? '序章已封存'
+                        : `进行至第 ${existingSave.prologueProgress.currentAct} 幕`}
                   </p>
                   <p className="text-base font-semibold text-white mt-0.5">
                     {existingSave.player.displayName}

@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CharacterCreator } from './components/CharacterCreator';
+import { PrologueEliminated } from './components/PrologueEliminated';
 import { PrologueFinale } from './components/PrologueFinale';
 import { PrologueStage } from './components/PrologueStage';
 import { SaveImportModal } from './components/SaveImportModal';
 import { TitleScreen } from './components/TitleScreen';
 import { TraineeHud } from './components/TraineeHud';
+import { AGENCY_CONFIGS } from './game/constants';
 import { applyResolutionToState } from './game/prologueScript';
 import {
+  buildEliminationEndingDetails,
   clearLocalStorageSave,
   createSaveData,
   loadFromLocalStorage,
@@ -53,7 +56,7 @@ export default function App() {
     const stateAttr =
       screen === 'title'
         ? 'title'
-        : screen === 'finished'
+        : screen === 'finished' || screen === 'eliminated'
           ? 'gameover'
           : 'playing';
     document.body.dataset.state = stateAttr;
@@ -69,13 +72,17 @@ export default function App() {
       theqooPost,
       currentAct,
       completed: screen === 'finished',
+      eliminated: screen === 'eliminated',
       history,
     });
   }, [profile, stats, keepsake, behaviorTags, theqooPost, currentAct, screen, history]);
 
   // Auto-persist whenever active game state progresses
   useEffect(() => {
-    if (currentSaveData && (screen === 'playing' || screen === 'finished')) {
+    if (
+      currentSaveData &&
+      (screen === 'playing' || screen === 'finished' || screen === 'eliminated')
+    ) {
       saveToLocalStorage(currentSaveData);
       setExistingSave(currentSaveData);
     }
@@ -101,8 +108,16 @@ export default function App() {
     setTheqooPost(save.theqooPost);
     setHistory(save.prologueProgress.history);
     setCurrentAct(save.prologueProgress.currentAct);
-    setCurrentResolution(null);
-    setScreen(save.prologueProgress.completed ? 'finished' : 'playing');
+    const lastHistoryItem =
+      save.prologueProgress.history[save.prologueProgress.history.length - 1] ?? null;
+    setCurrentResolution(save.prologueProgress.eliminated ? lastHistoryItem : null);
+    setScreen(
+      save.prologueProgress.eliminated
+        ? 'eliminated'
+        : save.prologueProgress.completed
+          ? 'finished'
+          : 'playing'
+    );
     saveToLocalStorage(save);
     setExistingSave(save);
   }, []);
@@ -124,34 +139,59 @@ export default function App() {
 
   const handleResolveAct = useCallback(
     (resolution: ActResolution) => {
-      if (!stats) return;
+      if (!stats || !profile) return;
       const { nextStats, nextTags } = applyResolutionToState(
         stats,
         behaviorTags,
         resolution
       );
+
+      let finalResolution = resolution;
+      if (nextStats.stamina <= 0 && !resolution.isEliminated) {
+        const ending = buildEliminationEndingDetails(
+          'stamina_collapse',
+          AGENCY_CONFIGS[profile.agency].name
+        );
+        finalResolution = {
+          ...resolution,
+          outcomeTier: 'flawed',
+          isEliminated: true,
+          endingTitle: ending.endingTitle,
+          endingReason: ending.endingReason,
+          endingSummary: ending.endingSummary,
+        };
+      }
+
       setStats(nextStats);
       setBehaviorTags(nextTags);
-      if (resolution.keepsakeAwarded) {
-        setKeepsake(resolution.keepsakeAwarded);
+      if (finalResolution.keepsakeAwarded) {
+        setKeepsake(finalResolution.keepsakeAwarded);
       }
-      if (resolution.theqooPost) {
-        setTheqooPost(resolution.theqooPost);
+      if (finalResolution.theqooPost) {
+        setTheqooPost(finalResolution.theqooPost);
       }
-      setCurrentResolution(resolution);
-      setHistory((prev) => [...prev, resolution]);
+      setCurrentResolution(finalResolution);
+      setHistory((prev) => [...prev, finalResolution]);
     },
-    [stats, behaviorTags]
+    [stats, profile, behaviorTags]
   );
 
   const handleNextAct = useCallback(() => {
+    if (currentResolution?.isEliminated) {
+      setScreen('eliminated');
+      return;
+    }
     setCurrentResolution(null);
     if (currentAct >= 5) {
       setScreen('finished');
     } else {
       setCurrentAct((prev) => prev + 1);
     }
-  }, [currentAct]);
+  }, [currentAct, currentResolution]);
+
+  const handleViewElimination = useCallback(() => {
+    setScreen('eliminated');
+  }, []);
 
   const handleRestartFromScratch = useCallback(() => {
     clearLocalStorageSave();
@@ -200,6 +240,7 @@ export default function App() {
                 currentResolution={currentResolution}
                 onResolveAct={handleResolveAct}
                 onNextAct={handleNextAct}
+                onViewElimination={handleViewElimination}
               />
             </main>
           </div>
@@ -211,6 +252,16 @@ export default function App() {
           saveData={currentSaveData}
           onRestart={handleRestartFromScratch}
           onOpenExportModal={() => setModalMode('export')}
+        />
+      )}
+
+      {screen === 'eliminated' && profile && stats && (
+        <PrologueEliminated
+          profile={profile}
+          stats={stats}
+          behaviorTags={behaviorTags}
+          eliminationResolution={currentResolution ?? history[history.length - 1] ?? null}
+          onRestart={handleRestartFromScratch}
         />
       )}
 
